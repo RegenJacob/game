@@ -1,8 +1,8 @@
 mod color;
+mod teapot;
 
 use color::BACKGROUND_COLOR;
-use egui::{vec2, Key, Slider};
-use glium::glutin::event::{ElementState, KeyboardInput};
+use egui::{vec2, Slider};
 use glium::implement_vertex;
 use glium::uniform;
 use std::time::Instant;
@@ -25,43 +25,47 @@ fn main() {
 
     let mut name = "Hi!";
 
-    #[derive(Copy, Clone)]
-    struct Vertex {
-        position: [f32; 2],
-    }
 
-    implement_vertex!(Vertex, position);
+    let positions = glium::VertexBuffer::new(&display, &teapot::VERTICES).unwrap();
+    let normals = glium::VertexBuffer::new(&display, &teapot::NORMALS).unwrap();
+    let indices = glium::IndexBuffer::new(&display, glium::index::PrimitiveType::TrianglesList,
+                                      &teapot::INDICES).unwrap();
 
-    let vertex1 = Vertex {
-        position: [-0.5, -0.5],
-    };
-    let vertex2 = Vertex {
-        position: [0.0, 0.5],
-    };
-    let vertex3 = Vertex {
-        position: [0.5, -0.25],
-    };
-    let shape = vec![vertex1, vertex2, vertex3];
-
-    let vertex_buffer = glium::VertexBuffer::new(&display, &shape).unwrap();
-    let indices = glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList);
 
     let vertex_shader_src = r#"
-        #version 140
-        in vec2 position;
+        #version 330
 
+        in vec3 position;
+        in vec3 normal;
+
+        out vec3 v_normal;
+
+        uniform mat4 perspective;
         uniform mat4 matrix;
 
         void main() {
-            gl_Position = matrix * vec4(position, 0.0, 1.0);
+            v_normal = transpose(inverse(mat3(matrix))) * normal;  
+            gl_Position = perspective * matrix * vec4(position, 1.0);
         }
     "#;
 
     let fragment_shader_src = r#"
-        #version 140
+        #version 330
+
+        #ifdef GL_ES
+        precision mediump float;
+        #endif
+        
+        in vec3 v_normal;
         out vec4 color;
+        uniform vec3 u_light;
+        uniform vec4 rgba;
+
         void main() {
-            color = vec4(1.0, 0.0, 0.0, 1.0);
+            float brightness = dot(normalize(v_normal), normalize(u_light));
+            vec3 dark_color = vec3(0.6 * rgba);
+            vec3 regular_color = vec3(rgba);
+            color = vec4(mix(dark_color, regular_color, brightness), rgba[3]);
         }
     "#;
 
@@ -72,8 +76,9 @@ fn main() {
     let mut t: f32 = -0.5;
     let mut x: f32 = 0.0;
     let mut y: f32 = 0.0;
+    let mut z: f32 = 2.0;
 
-    let mut triangle_color = [2 as u8; 3];
+    let mut color_picker_color = egui::Color32::from_rgba_premultiplied(255, 0, 0, 255);
 
     event_loop.run(move |event, _, control_flow| {
         t += 0.0002;
@@ -114,72 +119,117 @@ fn main() {
                 egui::ComboBox::from_label("Version")
                     .width(150.0)
                     .selected_text("Moin leude so ne box hier")
-                    .show_ui(ui, |ui| {});
+                    .show_ui(ui, |ui| {
+                        ui.label("Keine Ahnung");
+                    });
 
                 egui::CollapsingHeader::new("Dev")
                     .default_open(true)
                     .show(ui, |ui| {
                         ui.label("contains");
-                        ui.button("Hi");
+                        if ui.button("Hi").double_clicked() {
+                            println!("Hi");
+                        };
                     });
             });
 
-            egui::Window::new("Dreieck")
+            egui::Window::new("Teekanne")
                 .scroll(false)
-                .resize(|r| r.resizable(true))
-                .default_size(vec2(512.0, 256.0))
+                .default_size(vec2(200.0, 256.0))
                 .show(egui.ctx(), |ui| {
-                    ui.label(name);
-                    if ui.button("Set label").clicked() {
-                        name = "Hello!";
-                    }
-
-                    ui.add(Slider::new(&mut x, -1.0..=1.0).text("X")).dragged();
-                    ui.add(Slider::new(&mut y, -1.0..=1.0).text("Y")).dragged();
-
-                    ui.color_edit_button_srgb(&mut triangle_color);
+                    egui::CollapsingHeader::new("Location")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            // Ui for the teacan location
+                            ui.add(Slider::new(&mut x, -1.0..=1.0).text("X")).dragged();
+                            ui.add(Slider::new(&mut y, -1.0..=1.0).text("Y")).dragged();
+                            ui.add(Slider::new(&mut z, -2.0..=2.0).text("Z")).dragged();
+                        });
+                    ui.color_edit_button_srgba(&mut color_picker_color);
                 });
 
-            let (needs_repaint, shapes) = egui.end_frame(&display);
-            
+            let (_needs_repaint, shapes) = egui.end_frame(&display);
+            /*
             *control_flow = if quit {
                 glutin::event_loop::ControlFlow::Exit
             } else if needs_repaint {
-                display.gl_window().window().request_redraw();
                 glutin::event_loop::ControlFlow::Poll
             } else {
                 glutin::event_loop::ControlFlow::Wait
             };
+            */
+
+            let next_frame_time = std::time::Instant::now() +
+                std::time::Duration::from_nanos(16_666_667);
+             *control_flow = glutin::event_loop::ControlFlow::WaitUntil(next_frame_time);
             
+                display.gl_window().window().request_redraw();
 
             {
                 use glium::Surface as _;
                 let mut target = display.draw();
             
-                target.clear_color_srgb(
-                    BACKGROUND_COLOR.get_glfloat_red(),
-                    BACKGROUND_COLOR.get_glfloat_green(),
-                    BACKGROUND_COLOR.get_glfloat_blue(),
-                    1.0,
+                target.clear_color_srgb_and_depth(
+                    (
+                        BACKGROUND_COLOR.get_glfloat_red(),
+                        BACKGROUND_COLOR.get_glfloat_green(),
+                        BACKGROUND_COLOR.get_glfloat_blue(),
+                        1.0,
+                    ),
+                    1.0 // alpha
                 );
-                    
 
-                let uniforms = uniform! {
-                    matrix: [
-                        [t.cos(), t.sin(), 0.0, 0.0],
-                        [-t.sin(), t.cos(), 0.0, 0.0],
-                        [0.0, 0.0, 1.0, 0.0],
-                        [ x , y, 0.0, 1.0f32],
+                    
+                let matrix = [
+                        [0.01, 0.0, 0.0, 0.0],
+                        [0.0, 0.01, 0.0, 0.0],
+                        [0.0, 0.0, 0.01, 0.0],
+                        [x, y, z, 1.0f32],
+                ];
+
+                let perspective = {
+                    let (width, height) = target.get_dimensions();
+                    let aspect_ratio = height as f32 / width as f32;
+
+                    let fov: f32 = 3.141592 / 3.0;
+                    let zfar = 1024.0;
+                    let znear = 0.1;
+
+                    let f = 1.0 / (fov / 2.0).tan();
+
+                    [
+                        [f *   aspect_ratio   ,    0.0,              0.0              ,   0.0],
+                        [         0.0         ,     f ,              0.0              ,   0.0],
+                        [         0.0         ,    0.0,  (zfar+znear)/(zfar-znear)    ,   1.0],
+                        [         0.0         ,    0.0, -(2.0*zfar*znear)/(zfar-znear),   0.0],
                     ]
+                };   
+
+                let light = [-1.0, 0.4, 0.9f32];
+                let color = [
+                    color_picker_color[0] as f32 / 250.0,
+                    color_picker_color[1] as f32 / 250.0,
+                    color_picker_color[2] as f32 / 250.0,
+                    color_picker_color[3] as f32 / 250.0,
+                ];
+
+                let params = glium::DrawParameters {
+                    depth: glium::Depth {
+                        test: glium::draw_parameters::DepthTest::IfLess,
+                        write: true,
+                        .. Default::default()
+                    },
+                    blend: glium::draw_parameters::Blend::alpha_blending(),
+                        .. Default::default()
                 };
 
                 target
                     .draw(
-                        &vertex_buffer,
+                        (&positions, &normals),
                         &indices,
                         &program,
-                        &uniforms,
-                        &Default::default(),
+                        &uniform! { matrix: matrix, perspective: perspective, u_light: light, rgba: color },
+                        &params,
                     )
                     .unwrap();
                 // draw things behind egui here
@@ -200,15 +250,10 @@ fn main() {
             glutin::event::Event::RedrawRequested(_) if !cfg!(windows) => redraw(),
 
             glutin::event::Event::WindowEvent { event, .. } => {
-                glutin::event::KeyboardInput {
-                    scancode: 0,
-                    state: ElementState::Pressed,
-                    virtual_keycode: None,
-                    modifiers: Default::default(),
-                };
+               
 
                 egui.on_event(event, control_flow);
-                display.gl_window().window().request_redraw(); // TODO: ask egui if the events warrants a repaint instead
+                //display.gl_window().window().request_redraw(); // TODO: ask egui if the events warrants a repaint instead
             }
 
             _ => (),
