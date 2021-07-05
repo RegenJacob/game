@@ -343,9 +343,6 @@ fn main() {
                         return;
                     }
 
-                    // todo!("GUI weg  machen wenn ESC gedrückt ist");
-
-
                     match keycode {
                         VirtualKeyCode::Escape => gui_is_active = !gui_is_active,
                         VirtualKeyCode::W => println!("w"),
